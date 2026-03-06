@@ -713,7 +713,7 @@ function render() {
 
   if (appMode === 'dashboard') {
     if (dashLoggedIn) {
-      var pendingCount = (state.savedLists || []).filter(function(l) { return l.status === 'pending'; }).length;
+      var pendingCount = _shoppingLists.filter(function(l) { return l.status === 'pending'; }).length;
       var histBadge = pendingCount > 0 ? ' (' + pendingCount + ')' : '';
       ha.innerHTML = modeToggle +
         '<button class="header-btn" onclick="showOrderHistory()">📋 Orders' + histBadge + '</button>' +
@@ -1067,7 +1067,9 @@ function doDashLogin() {
   if (pin === DASH_PIN) {
     dashLoggedIn = true;
     _invCloudSynced = false;
+    _shoppingListsLoaded = false;
     invCloudLoad(function() { render(); });
+    loadShoppingLists(function() { render(); });
     render();
   } else {
     var err = document.getElementById('dashError');
@@ -1247,8 +1249,61 @@ function setDashOrderName(centerId, itemId, name) {
 }
 
 // ============================================================
-// SHOPPING LIST — with save/history
+// SHOPPING LIST — cloud-saved, cross-device
 // ============================================================
+
+// In-memory cache of shopping lists loaded from the Sheet
+var _shoppingLists = [];
+var _shoppingListsLoaded = false;
+var _shoppingListsLoading = false;
+
+function loadShoppingLists(callback) {
+  if (_shoppingListsLoading) return;
+  _shoppingListsLoading = true;
+  fetch(INV_SCRIPT_URL + '?tab=shopping_lists')
+    .then(function(r) { return r.json(); })
+    .then(function(rows) {
+      _shoppingListsLoading = false;
+      _shoppingListsLoaded = true;
+      if (Array.isArray(rows)) {
+        // Sort newest first by createdAt
+        _shoppingLists = rows.sort(function(a, b) {
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+      }
+      if (callback) callback();
+    })
+    .catch(function() {
+      _shoppingListsLoading = false;
+      _shoppingListsLoaded = true;
+      // Fall back to any locally cached lists
+      if (!state.savedLists) state.savedLists = [];
+      _shoppingLists = state.savedLists;
+      if (callback) callback();
+    });
+}
+
+function cloudSaveShoppingList(saved, callback) {
+  fetch(INV_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ tab: 'shopping_lists', data: saved })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) { if (callback) callback(true); })
+  .catch(function() { if (callback) callback(false); });
+}
+
+function cloudUpdateShoppingListStatus(id, status, orderedAt, callback) {
+  fetch(INV_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ tab: 'shopping_lists', action: 'updateStatus', id: id, status: status, orderedAt: orderedAt })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) { if (callback) callback(true); })
+  .catch(function() { if (callback) callback(false); });
+}
 
 function buildCenterVendorLists() {
   var centerNames = {};
@@ -1277,22 +1332,6 @@ function buildCenterVendorLists() {
   return centerVendorLists;
 }
 
-function saveShoppingList(centerVendorLists) {
-  var now = new Date();
-  var saved = {
-    id: genId(),
-    createdAt: now.toISOString(),
-    createdLabel: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-    status: 'pending',
-    orderedAt: null,
-    centerVendorLists: JSON.parse(JSON.stringify(centerVendorLists))
-  };
-  if (!state.savedLists) state.savedLists = [];
-  state.savedLists.unshift(saved);
-  saveState(state);
-  return saved;
-}
-
 function generateShoppingList() {
   var centerVendorLists = buildCenterVendorLists();
 
@@ -1307,8 +1346,29 @@ function generateShoppingList() {
     return;
   }
 
-  var saved = saveShoppingList(centerVendorLists);
+  var now = new Date();
+  var saved = {
+    id: genId(),
+    createdAt: now.toISOString(),
+    createdLabel: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+    status: 'pending',
+    orderedAt: null,
+    centerVendorLists: JSON.parse(JSON.stringify(centerVendorLists))
+  };
+
+  // Add to in-memory list immediately so it's visible right away
+  _shoppingLists.unshift(saved);
+
+  // Save to cloud (and localStorage as fallback)
+  if (!state.savedLists) state.savedLists = [];
+  state.savedLists.unshift(saved);
+  saveState(state);
+  cloudSaveShoppingList(saved, function(ok) {
+    // Silently succeeds or fails — local copy always available
+  });
+
   showShoppingListModal(saved);
+  render(); // update Orders badge count
 }
 
 function showShoppingListModal(saved) {
@@ -1362,25 +1422,48 @@ function showShoppingListModal(saved) {
 }
 
 function markListOrdered(listId) {
-  var list = (state.savedLists || []).find(function(l) { return l.id === listId; });
+  // Find in in-memory list first, then localStorage fallback
+  var list = _shoppingLists.find(function(l) { return l.id === listId; });
+  if (!list) list = (state.savedLists || []).find(function(l) { return l.id === listId; });
   if (!list) return;
 
   var now = new Date();
+  var orderedAt = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   list.status = 'ordered';
-  list.orderedAt = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  list.orderedAt = orderedAt;
+
+  // Update local fallback too
+  var localList = (state.savedLists || []).find(function(l) { return l.id === listId; });
+  if (localList) { localList.status = 'ordered'; localList.orderedAt = orderedAt; }
   saveState(state);
 
-  _lastOrderCompleted = list.orderedAt;
+  // Push status update to cloud
+  cloudUpdateShoppingListStatus(listId, 'ordered', orderedAt, function(ok) {});
+
+  _lastOrderCompleted = orderedAt;
   dashOrders = {};
   dashOrderNames = {};
 
-  // Re-render modal to show ordered state
   showShoppingListModal(list);
   render();
 }
 
 function showOrderHistory() {
-  var lists = (state.savedLists || []);
+  // If not yet loaded from cloud, load first then re-show
+  if (!_shoppingListsLoaded) {
+    document.getElementById('modal').innerHTML =
+      '<div class="modal-overlay"><div class="modal-card">' +
+      '<div class="modal-handle"></div>' +
+      '<h3>📋 Order History</h3>' +
+      '<div style="text-align:center;padding:2rem;"><div style="font-size:2rem;margin-bottom:0.5rem;">☁️</div>' +
+      '<div style="color:var(--brand);font-size:0.9rem;">Loading orders...</div></div>' +
+      '<div class="modal-btns"><button class="modal-btn secondary" onclick="closeModal()">Close</button></div>' +
+      '</div></div>';
+    loadShoppingLists(function() { showOrderHistory(); });
+    return;
+  }
+
+  var lists = _shoppingLists;
 
   var html = '<div class="modal-overlay"><div class="modal-card" style="max-height:90vh;">' +
     '<div class="modal-handle"></div>' +
@@ -1388,7 +1471,7 @@ function showOrderHistory() {
     '<h3>📋 Order History</h3>';
 
   if (lists.length > 0) {
-    html += '<button onclick="if(confirm(\'Clear all saved orders?\')){state.savedLists=[];saveState(state);closeModal();render();}" style="font-size:0.7rem;color:var(--danger);background:none;border:none;cursor:pointer;padding:0.3rem 0.5rem;">Clear All</button>';
+    html += '<button onclick="reloadOrderHistory()" style="font-size:0.7rem;color:var(--brand);background:none;border:none;cursor:pointer;padding:0.3rem 0.5rem;">↻ Refresh</button>';
   }
   html += '</div>';
 
@@ -1412,7 +1495,7 @@ function showOrderHistory() {
       html += '<div class="order-history-item">' +
         '<div class="order-history-header">' +
         '<div class="order-history-meta">' +
-        '<div class="order-history-date">' + list.createdLabel + '</div>' +
+        '<div class="order-history-date">' + (list.createdLabel || list.createdAt || '') + '</div>' +
         '<div class="order-history-sub">' + centerCount + ' center' + (centerCount !== 1 ? 's' : '') + ' · ' + itemCount + ' line item' + (itemCount !== 1 ? 's' : '') +
         (isOrdered ? ' · Ordered ' + list.orderedAt : '') + '</div>' +
         '</div>' +
@@ -1420,9 +1503,8 @@ function showOrderHistory() {
         (isOrdered ? '✅ Ordered' : '⏳ Pending') + '</span>' +
         '</div>' +
         '<div style="padding:0.5rem 1rem 0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap;">' +
-        '<button class="view-btn" onclick="closeModal();showShoppingListModal(getSavedList(\'' + list.id + '\'))">Open List</button>' +
+        '<button class="view-btn" onclick="closeModal();showShoppingListModal(getShoppingList(\'' + list.id + '\'))">Open List</button>' +
         (!isOrdered ? '<button class="view-btn" style="background:var(--brand-light);color:var(--brand);border-color:var(--brand);" onclick="markListOrdered(\'' + list.id + '\');closeModal();showOrderHistory();">Mark Ordered</button>' : '') +
-        '<button class="view-btn" style="color:var(--danger);border-color:var(--danger);background:var(--danger-light);" onclick="deleteOrder(\'' + list.id + '\')">Delete</button>' +
         '</div>' +
         '</div>';
     });
@@ -1434,15 +1516,14 @@ function showOrderHistory() {
   document.getElementById('modal').innerHTML = html;
 }
 
-function getSavedList(id) {
-  return (state.savedLists || []).find(function(l) { return l.id === id; });
+function reloadOrderHistory() {
+  _shoppingListsLoaded = false;
+  showOrderHistory();
 }
 
-function deleteOrder(listId) {
-  if (!confirm('Delete this order from history?')) return;
-  state.savedLists = (state.savedLists || []).filter(function(l) { return l.id !== listId; });
-  saveState(state);
-  showOrderHistory();
+function getShoppingList(id) {
+  return _shoppingLists.find(function(l) { return l.id === id; }) ||
+         (state.savedLists || []).find(function(l) { return l.id === id; });
 }
 
 function printShoppingList() {
