@@ -712,6 +712,44 @@ function parseShoppingListRow(row) {
   return null;
 }
 
+var STATUS_PRIORITY = { 'pending': 0, 'ordered': 1, 'archived': 2 };
+
+function mergeShoppingLists(cloudLists) {
+  // Build a map of local lists by ID (localStorage has the most up-to-date status)
+  var localById = {};
+  (state.savedLists || []).forEach(function(l) { if (l.id) localById[l.id] = l; });
+
+  var merged = {};
+
+  // Start with cloud lists
+  cloudLists.forEach(function(cl) {
+    if (!cl.id) return;
+    var local = localById[cl.id];
+    if (local) {
+      // Local version exists — keep whichever has the higher status
+      var cloudPri = STATUS_PRIORITY[cl.status] || 0;
+      var localPri = STATUS_PRIORITY[local.status] || 0;
+      if (localPri >= cloudPri) {
+        // Local wins — preserve checked items, qty edits, status, timestamps
+        merged[cl.id] = local;
+      } else {
+        merged[cl.id] = cl;
+      }
+    } else {
+      merged[cl.id] = cl;
+    }
+  });
+
+  // Also include any local-only lists not in cloud (e.g. just created, cloud POST pending)
+  Object.keys(localById).forEach(function(id) {
+    if (!merged[id]) merged[id] = localById[id];
+  });
+
+  return Object.values(merged).sort(function(a, b) {
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+}
+
 function loadShoppingLists(callback) {
   if (_shoppingListsLoading) return;
   _shoppingListsLoading = true;
@@ -723,7 +761,7 @@ function loadShoppingLists(callback) {
         var p = parseShoppingListRow(row);
         if (p) parsed.push(p);
       });
-      _shoppingLists = parsed.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+      _shoppingLists = mergeShoppingLists(parsed);
     }
     if (callback) callback();
   }).catch(function() { _shoppingListsLoading = false; _shoppingListsLoaded = true; if (!state.savedLists) state.savedLists = []; _shoppingLists = state.savedLists; if (callback) callback(); });
