@@ -667,12 +667,34 @@ var _shoppingLists = [];
 var _shoppingListsLoaded = false;
 var _shoppingListsLoading = false;
 
+function parseShoppingListRow(row) {
+  // The Sheet may store the entire list as a JSON string in one cell,
+  // or return it as an object with centerVendorLists as a nested string.
+  if (typeof row === 'string') {
+    try { row = JSON.parse(row); } catch(e) { return null; }
+  }
+  if (!row || !row.id) return null;
+  // Parse centerVendorLists if it came back as a string
+  if (typeof row.centerVendorLists === 'string') {
+    try { row.centerVendorLists = JSON.parse(row.centerVendorLists); } catch(e) { row.centerVendorLists = {}; }
+  }
+  if (!row.centerVendorLists) row.centerVendorLists = {};
+  return row;
+}
+
 function loadShoppingLists(callback) {
   if (_shoppingListsLoading) return;
   _shoppingListsLoading = true;
   fetch(INV_SCRIPT_URL + '?tab=shopping_lists').then(function(r) { return r.json(); }).then(function(rows) {
     _shoppingListsLoading = false; _shoppingListsLoaded = true;
-    if (Array.isArray(rows)) { _shoppingLists = rows.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); }); }
+    if (Array.isArray(rows)) {
+      var parsed = [];
+      rows.forEach(function(row) {
+        var p = parseShoppingListRow(row);
+        if (p) parsed.push(p);
+      });
+      _shoppingLists = parsed.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+    }
     if (callback) callback();
   }).catch(function() { _shoppingListsLoading = false; _shoppingListsLoaded = true; if (!state.savedLists) state.savedLists = []; _shoppingLists = state.savedLists; if (callback) callback(); });
 }
