@@ -793,7 +793,8 @@ function showShoppingListModal(saved) {
 
   var timeLabel = saved.archivedAt ? 'Archived ' + saved.archivedAt : (saved.orderedAt ? 'Ordered ' + saved.orderedAt : 'Created ' + saved.createdLabel);
 
-  var listHtml = '<div class="modal-overlay"><div class="modal-card"><div class="modal-handle"></div>' +
+  var overlayClose = saved.status === 'archived' ? ' onclick="if(event.target===this)closeModal()"' : '';
+  var listHtml = '<div class="modal-overlay"' + overlayClose + '><div class="modal-card"><div class="modal-handle"></div>' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;"><h3>\u{1F6D2} Shopping List</h3>' +
     '<button class="header-btn" style="background:var(--brand-light);color:var(--brand);border-color:var(--brand);font-size:0.72rem;" onclick="printShoppingList()">Print \u{1F5A8}\uFE0F</button></div>' +
     '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;">' + statusBadge +
@@ -933,7 +934,7 @@ function markOrderComplete() {
 }
 
 if ('serviceWorker' in navigator) {
-  var swCode = ['var CACHE = "tcc-inv-v2";','var FILES = ["/"];','self.addEventListener("install", function(e) {','  e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(FILES); }));','  self.skipWaiting();','});','self.addEventListener("activate", function(e) {','  e.waitUntil(caches.keys().then(function(keys){','    return Promise.all(keys.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));','  }));','  self.clients.claim();','});','self.addEventListener("fetch", function(e) {','  if (e.request.method !== "GET") return;','  e.respondWith(caches.match(e.request).then(function(r){','    return r || fetch(e.request).then(function(nr){','      var c = nr.clone();','      caches.open(CACHE).then(function(cache){ cache.put(e.request, c); });','      return nr;','    }).catch(function(){ return r; });','  }));','});'].join('\n');
+  var swCode = ['var CACHE = "tcc-inv-v3";','var FILES = ["/"];','self.addEventListener("install", function(e) {','  e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(FILES); }));','  self.skipWaiting();','});','self.addEventListener("activate", function(e) {','  e.waitUntil(caches.keys().then(function(keys){','    return Promise.all(keys.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));','  }));','  self.clients.claim();','});','self.addEventListener("fetch", function(e) {','  if (e.request.method !== "GET") return;','  e.respondWith(caches.match(e.request).then(function(r){','    return r || fetch(e.request).then(function(nr){','      var c = nr.clone();','      caches.open(CACHE).then(function(cache){ cache.put(e.request, c); });','      return nr;','    }).catch(function(){ return r; });','  }));','});'].join('\n');
   var swBlob = new Blob([swCode], { type: 'application/javascript' });
   var swUrl = URL.createObjectURL(swBlob);
   navigator.serviceWorker.register(swUrl).catch(function() {});
