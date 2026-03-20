@@ -668,18 +668,48 @@ var _shoppingListsLoaded = false;
 var _shoppingListsLoading = false;
 
 function parseShoppingListRow(row) {
-  // The Sheet may store the entire list as a JSON string in one cell,
-  // or return it as an object with centerVendorLists as a nested string.
-  if (typeof row === 'string') {
-    try { row = JSON.parse(row); } catch(e) { return null; }
+  if (!row || typeof row !== 'object') return null;
+  // The Sheet returns columns like: ID, Created At, Created Label, Status, JSON Data, etc.
+  // The full JSON object may be stored in any column value as a stringified JSON blob.
+  // Strategy: if row already has 'id' and 'centerVendorLists', use it directly.
+  // Otherwise, scan all column values for a JSON string containing 'centerVendorLists'.
+  if (row.id && row.centerVendorLists) {
+    if (typeof row.centerVendorLists === 'string') {
+      try { row.centerVendorLists = JSON.parse(row.centerVendorLists); } catch(e) { row.centerVendorLists = {}; }
+    }
+    return row;
   }
-  if (!row || !row.id) return null;
-  // Parse centerVendorLists if it came back as a string
-  if (typeof row.centerVendorLists === 'string') {
-    try { row.centerVendorLists = JSON.parse(row.centerVendorLists); } catch(e) { row.centerVendorLists = {}; }
+  // Scan column values for the full JSON blob
+  var vals = Object.values(row);
+  for (var i = 0; i < vals.length; i++) {
+    var v = vals[i];
+    if (typeof v === 'string' && v.indexOf('centerVendorLists') >= 0) {
+      try {
+        var parsed = JSON.parse(v);
+        if (parsed && parsed.id && parsed.centerVendorLists) {
+          if (typeof parsed.centerVendorLists === 'string') {
+            try { parsed.centerVendorLists = JSON.parse(parsed.centerVendorLists); } catch(e2) { parsed.centerVendorLists = {}; }
+          }
+          return parsed;
+        }
+      } catch(e) {}
+    }
   }
-  if (!row.centerVendorLists) row.centerVendorLists = {};
-  return row;
+  // Also try 'JSON Data' column specifically
+  var jsonData = row['JSON Data'] || row['json_data'] || row['data'];
+  if (typeof jsonData === 'string' && jsonData.length > 2) {
+    try {
+      var p = JSON.parse(jsonData);
+      if (p && p.id) {
+        if (typeof p.centerVendorLists === 'string') {
+          try { p.centerVendorLists = JSON.parse(p.centerVendorLists); } catch(e3) { p.centerVendorLists = {}; }
+        }
+        if (!p.centerVendorLists) p.centerVendorLists = {};
+        return p;
+      }
+    } catch(e) {}
+  }
+  return null;
 }
 
 function loadShoppingLists(callback) {
