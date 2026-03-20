@@ -778,12 +778,64 @@ function generateShoppingList() {
   render();
 }
 
+function saveListChecksAndQtys(listId) {
+  // Read current checkbox states and qty values from the DOM and save to the list object
+  var list = _shoppingLists.find(function(l) { return l.id === listId; });
+  if (!list) list = (state.savedLists || []).find(function(l) { return l.id === listId; });
+  if (!list) return;
+  var checks = document.querySelectorAll('[data-check-key]');
+  if (!list.checkedItems) list.checkedItems = {};
+  checks.forEach(function(cb) { list.checkedItems[cb.getAttribute('data-check-key')] = cb.checked; });
+  var qtyInputs = document.querySelectorAll('[data-qty-key]');
+  qtyInputs.forEach(function(inp) {
+    var key = inp.getAttribute('data-qty-key');
+    var parts = key.split('||');
+    if (parts.length === 4) {
+      var cId = parts[0], vName = parts[1], idx = parseInt(parts[2]);
+      try { list.centerVendorLists[cId].vendors[vName].items[idx].qty = inp.value; } catch(e) {}
+    }
+  });
+  // Save locally
+  var localList = (state.savedLists || []).find(function(l) { return l.id === listId; });
+  if (localList && localList !== list) {
+    localList.checkedItems = list.checkedItems;
+    localList.centerVendorLists = list.centerVendorLists;
+  }
+  saveState(state);
+}
+
+function buildMcKessonCombined(centerVendorLists) {
+  var combined = {};
+  Object.keys(centerVendorLists).forEach(function(centerId) {
+    var cl = centerVendorLists[centerId];
+    if (cl.vendors && cl.vendors['McKesson']) {
+      cl.vendors['McKesson'].items.forEach(function(item) {
+        if (!combined[item.name]) combined[item.name] = { name: item.name, qty: 0 };
+        combined[item.name].qty += parseInt(item.qty) || 0;
+      });
+    }
+  });
+  return Object.values(combined);
+}
+
+function hasMcKessonMultipleCenters(centerVendorLists) {
+  var count = 0;
+  Object.keys(centerVendorLists).forEach(function(centerId) {
+    var cl = centerVendorLists[centerId];
+    if (cl.vendors && cl.vendors['McKesson'] && cl.vendors['McKesson'].items.length > 0) count++;
+  });
+  return count > 1;
+}
+
 function showShoppingListModal(saved) {
   var centerVendorLists = saved.centerVendorLists;
   var isOrdered = saved.status === 'ordered';
+  var isArchived = saved.status === 'archived';
+  var isPending = saved.status === 'pending';
+  var isEditable = isPending || isOrdered;
 
   var statusBadge;
-  if (saved.status === 'archived') {
+  if (isArchived) {
     statusBadge = '<span style="background:#ede9fe;color:#7c3aed;font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:50px;">\u{1F4C1} Archived</span>';
   } else if (isOrdered) {
     statusBadge = '<span style="background:var(--brand-light);color:var(--brand);font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:50px;">\u2705 Ordered</span>';
@@ -792,40 +844,74 @@ function showShoppingListModal(saved) {
   }
 
   var timeLabel = saved.archivedAt ? 'Archived ' + saved.archivedAt : (saved.orderedAt ? 'Ordered ' + saved.orderedAt : 'Created ' + saved.createdLabel);
+  var modalTitle = isArchived ? '\u2705 Completed Order' : '\u{1F6D2} Shopping List';
 
-  var overlayClose = saved.status === 'archived' ? ' onclick="if(event.target===this)closeModal()"' : '';
+  var overlayClose = isArchived ? ' onclick="if(event.target===this)closeModal()"' : '';
   var listHtml = '<div class="modal-overlay"' + overlayClose + '><div class="modal-card"><div class="modal-handle"></div>' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;"><h3>\u{1F6D2} Shopping List</h3>' +
-    '<button class="header-btn" style="background:var(--brand-light);color:var(--brand);border-color:var(--brand);font-size:0.72rem;" onclick="printShoppingList()">Print \u{1F5A8}\uFE0F</button></div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;"><h3>' + modalTitle + '</h3>' +
+    '<button class="header-btn" style="background:var(--brand-light);color:var(--brand);border-color:var(--brand);font-size:0.72rem;" onclick="printShoppingList(\'' + saved.id + '\')">Print \u{1F5A8}\uFE0F</button></div>' +
     '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;">' + statusBadge +
     '<span style="font-size:0.72rem;color:var(--text-light);">' + timeLabel + '</span></div>';
 
+  var checkedItems = saved.checkedItems || {};
+
   Object.keys(centerVendorLists).forEach(function(centerId) {
     var cl = centerVendorLists[centerId];
-    listHtml += '<div style="background:var(--brand-dark);color:white;padding:0.55rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;font-weight:700;font-size:0.95rem;font-family:Fraunces,serif;">\u{1F3E2} ' + cl.name + '</div>';
+    listHtml += '<div class="sl-center-header" style="background:var(--brand-dark);color:white;padding:0.55rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;font-weight:700;font-size:0.95rem;font-family:Fraunces,serif;">\u{1F3E2} ' + cl.name + '</div>';
     VENDOR_ORDER.forEach(function(vName) {
       var vl = cl.vendors[vName]; if (!vl) return; var v = vl.vendor;
       listHtml += '<div class="vendor-header" style="background:' + v.color + '14;border-left:4px solid ' + v.color + ';"><span>' + v.icon + '</span><span style="font-weight:700;font-size:0.88rem;color:' + v.color + ';">' + vName + '</span><span style="font-size:0.68rem;color:var(--text-light);margin-left:auto;">' + vl.items.length + ' item' + (vl.items.length !== 1 ? 's' : '') + '</span></div>';
       listHtml += '<div style="margin-bottom:0.75rem;">';
-      vl.items.forEach(function(item) {
-        listHtml += '<div class="vendor-item-row"><span class="vendor-item-name">' + esc(item.name) + '</span><span class="vendor-item-qty">' + item.qty + '</span><span class="vendor-item-check"><input type="checkbox" aria-label="Checked"></span></div>';
+      vl.items.forEach(function(item, idx) {
+        var checkKey = centerId + '||' + vName + '||' + idx;
+        var qtyKey = centerId + '||' + vName + '||' + idx + '||qty';
+        var isChecked = checkedItems[checkKey] ? ' checked' : '';
+        var qtyHtml;
+        if (isEditable) {
+          qtyHtml = '<input type="text" inputmode="numeric" value="' + esc(item.qty) + '" data-qty-key="' + qtyKey + '" style="width:45px;text-align:center;font-weight:700;font-size:0.82rem;color:var(--brand-dark);border:1.5px solid var(--border);border-radius:6px;padding:0.2rem;font-family:DM Sans,sans-serif;" oninput="updateListQty(\'' + esc(saved.id) + '\',\'' + esc(centerId) + '\',\'' + esc(vName) + '\',' + idx + ',this.value)">';
+        } else {
+          qtyHtml = '<span class="vendor-item-qty">' + item.qty + '</span>';
+        }
+        listHtml += '<div class="vendor-item-row"><span class="vendor-item-name">' + esc(item.name) + '</span>' + qtyHtml + '<span class="vendor-item-check"><input type="checkbox" data-check-key="' + checkKey + '" aria-label="Checked"' + isChecked + '></span></div>';
       });
       listHtml += '</div>';
     });
   });
 
+  // Combined McKesson section for archived orders (or any order with McKesson from multiple centers)
+  if (hasMcKessonMultipleCenters(centerVendorLists)) {
+    var combined = buildMcKessonCombined(centerVendorLists);
+    if (combined.length > 0) {
+      var mcInfo = VENDOR_INFO['McKesson'];
+      listHtml += '<div class="sl-mckesson-combined" style="margin-top:1.25rem;padding-top:1rem;border-top:3px solid ' + mcInfo.color + ';">';
+      listHtml += '<div style="background:' + mcInfo.color + ';color:white;padding:0.55rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;font-weight:700;font-size:0.95rem;font-family:Fraunces,serif;">' + mcInfo.icon + ' McKesson \u2014 Combined Order (All Centers)</div>';
+      listHtml += '<div style="margin-bottom:0.75rem;">';
+      combined.forEach(function(item) {
+        listHtml += '<div class="vendor-item-row"><span class="vendor-item-name" style="font-weight:700;">' + esc(item.name) + '</span><span class="vendor-item-qty" style="font-size:1rem;font-weight:800;">' + item.qty + '</span></div>';
+      });
+      listHtml += '</div></div>';
+    }
+  }
+
   listHtml += '<div class="modal-btns">';
-  if (saved.status === 'archived') {
+  if (isArchived) {
     listHtml += '<button class="modal-btn secondary" onclick="closeModal()">Close</button>';
-  } else if (saved.status === 'ordered') {
-    listHtml += '<button class="modal-btn secondary" onclick="closeModal()">Back to List</button>';
-    listHtml += '<button class="modal-btn danger" style="background:#7c3aed;" onclick="if(confirm(\'Archive this order? It will be moved to the completed archive.\'))archiveList(\'' + saved.id + '\')">\u{1F4C1} Ordering Complete \u2014 Close Out & Archive</button>';
+  } else if (isOrdered) {
+    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal()">Back to List</button>';
+    listHtml += '<button class="modal-btn danger" style="background:#7c3aed;" onclick="saveListChecksAndQtys(\'' + saved.id + '\');if(confirm(\'Archive this order? It will be moved to the completed archive.\'))archiveList(\'' + saved.id + '\')">\u{1F4C1} Ordering Complete \u2014 Close Out & Archive</button>';
   } else {
-    listHtml += '<button class="modal-btn secondary" onclick="closeModal()">Back to List</button>';
-    listHtml += '<button class="modal-btn primary" onclick="markListOrdered(\'' + saved.id + '\')">\u2705 Mark as Ordered</button>';
+    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal()">Back to List</button>';
+    listHtml += '<button class="modal-btn primary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');markListOrdered(\'' + saved.id + '\')">\u2705 Mark as Ordered</button>';
   }
   listHtml += '</div></div></div>';
   document.getElementById('modal').innerHTML = listHtml;
+}
+
+function updateListQty(listId, centerId, vendorName, itemIdx, newQty) {
+  var list = _shoppingLists.find(function(l) { return l.id === listId; });
+  if (!list) list = (state.savedLists || []).find(function(l) { return l.id === listId; });
+  if (!list) return;
+  try { list.centerVendorLists[centerId].vendors[vendorName].items[itemIdx].qty = newQty; } catch(e) {}
 }
 
 function markListOrdered(listId) {
@@ -836,7 +922,7 @@ function markListOrdered(listId) {
   var orderedAt = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   list.status = 'ordered'; list.orderedAt = orderedAt;
   var localList = (state.savedLists || []).find(function(l) { return l.id === listId; });
-  if (localList) { localList.status = 'ordered'; localList.orderedAt = orderedAt; }
+  if (localList && localList !== list) { localList.status = 'ordered'; localList.orderedAt = orderedAt; localList.checkedItems = list.checkedItems; }
   saveState(state);
   cloudUpdateShoppingListStatus(listId, 'ordered', orderedAt, function(ok) {});
   showShoppingListModal(list);
@@ -844,6 +930,7 @@ function markListOrdered(listId) {
 }
 
 function archiveList(listId) {
+  saveListChecksAndQtys(listId);
   var list = _shoppingLists.find(function(l) { return l.id === listId; });
   if (!list) list = (state.savedLists || []).find(function(l) { return l.id === listId; });
   if (!list) return;
@@ -851,8 +938,9 @@ function archiveList(listId) {
   var archivedAt = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) + ' at ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   list.status = 'archived'; list.archivedAt = archivedAt;
   var localList = (state.savedLists || []).find(function(l) { return l.id === listId; });
-  if (localList) { localList.status = 'archived'; localList.archivedAt = archivedAt; }
+  if (localList && localList !== list) { localList.status = 'archived'; localList.archivedAt = archivedAt; localList.checkedItems = list.checkedItems; }
   saveState(state);
+  cloudSaveShoppingList(list, function(ok) {});
   cloudUpdateShoppingListStatus(listId, 'archived', archivedAt, function(ok) {});
   _lastOrderCompleted = archivedAt; dashOrders = {}; dashOrderNames = {};
   closeModal(); render();
@@ -917,11 +1005,29 @@ function getShoppingList(id) {
   return _shoppingLists.find(function(l) { return l.id === id; }) || (state.savedLists || []).find(function(l) { return l.id === id; });
 }
 
-function printShoppingList() {
+function printShoppingList(listId) {
+  // Save current state before printing
+  if (listId) saveListChecksAndQtys(listId);
+  var list = listId ? getShoppingList(listId) : null;
+  var isArchived = list && list.status === 'archived';
+  var title = isArchived ? '\u2705 Completed Order' : '\u{1F6D2} Shopping List';
+
   var modal = document.querySelector('.modal-card'); if (!modal) return;
   var printWin = window.open('', '_blank');
-  printWin.document.write('<html><head><title>Shopping List</title><style>body{font-family:Arial,sans-serif;padding:1rem;font-size:13px;}h3{margin-bottom:0.2rem;}.vendor-header{font-weight:700;margin-top:1rem;font-size:14px;}.vendor-item-row{display:flex;padding:4px 0;border-bottom:1px solid #eee;align-items:center;gap:0.5rem;}.vendor-item-name{flex:1;}.vendor-item-qty{font-weight:700;min-width:30px;text-align:center;}.vendor-item-check input{width:14px;height:14px;}</style></head><body>');
-  printWin.document.write('<h3>\u{1F6D2} Shopping List \u2014 ' + new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + '</h3>');
+  printWin.document.write('<html><head><title>' + title + '</title><style>');
+  printWin.document.write('body{font-family:Arial,sans-serif;padding:1rem;font-size:13px;}');
+  printWin.document.write('h3{margin-bottom:0.5rem;}');
+  printWin.document.write('.sl-center-header{background:#064e3b !important;color:white !important;padding:8px 12px;border-radius:6px;margin:16px 0 8px;font-weight:700;font-size:15px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}');
+  printWin.document.write('.vendor-header{font-weight:700;margin-top:10px;font-size:13px;padding:4px 8px;display:flex;align-items:center;gap:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}');
+  printWin.document.write('.vendor-item-row{display:flex;padding:4px 8px;border-bottom:1px solid #eee;align-items:center;gap:0.5rem;}');
+  printWin.document.write('.vendor-item-name{flex:1;}');
+  printWin.document.write('.vendor-item-qty{font-weight:700;min-width:30px;text-align:center;}');
+  printWin.document.write('.vendor-item-check input{width:14px;height:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}');
+  printWin.document.write('.sl-mckesson-combined{margin-top:20px;padding-top:12px;border-top:3px solid #dc2626;}');
+  printWin.document.write('.modal-btns,.modal-handle,.header-btn,.modal-btn{display:none !important;}');
+  printWin.document.write('input[type="text"]{border:none;font-weight:700;text-align:center;width:40px;}');
+  printWin.document.write('</style></head><body>');
+  printWin.document.write('<h3>' + title + ' \u2014 ' + new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + '</h3>');
   printWin.document.write(modal.innerHTML);
   printWin.document.write('</body></html>'); printWin.document.close();
   setTimeout(function() { printWin.print(); }, 300);
