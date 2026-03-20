@@ -950,6 +950,22 @@ function updateListQty(listId, centerId, vendorName, itemIdx, newQty) {
   if (!list) list = (state.savedLists || []).find(function(l) { return l.id === listId; });
   if (!list) return;
   try { list.centerVendorLists[centerId].vendors[vendorName].items[itemIdx].qty = newQty; } catch(e) {}
+  // Refresh McKesson combined section if it exists
+  var combinedEl = document.querySelector('.sl-mckesson-combined');
+  if (combinedEl && list.centerVendorLists) {
+    var combined = buildMcKessonCombined(list.centerVendorLists);
+    if (combined.length > 0) {
+      var mcInfo = VENDOR_INFO['McKesson'];
+      var h = '<div style="margin-top:1.25rem;padding-top:1rem;border-top:3px solid ' + mcInfo.color + ';">';
+      h += '<div style="background:' + mcInfo.color + ';color:white;padding:0.55rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;font-weight:700;font-size:0.95rem;font-family:Fraunces,serif;">' + mcInfo.icon + ' McKesson \u2014 Combined Order (All Centers)</div>';
+      h += '<div style="margin-bottom:0.75rem;">';
+      combined.forEach(function(item) {
+        h += '<div class="vendor-item-row"><span class="vendor-item-name" style="font-weight:700;">' + esc(item.name) + '</span><span class="vendor-item-qty" style="font-size:1rem;font-weight:800;">' + item.qty + '</span></div>';
+      });
+      h += '</div></div>';
+      combinedEl.outerHTML = '<div class="sl-mckesson-combined">' + h + '</div>';
+    }
+  }
 }
 
 function markListOrdered(listId) {
