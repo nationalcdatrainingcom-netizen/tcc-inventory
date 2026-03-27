@@ -935,10 +935,10 @@ function showShoppingListModal(saved) {
   if (isArchived) {
     listHtml += '<button class="modal-btn secondary" onclick="closeModal()">Close</button>';
   } else if (isOrdered) {
-    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal()">Back to List</button>';
+    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal();showOrderHistory()">Back to Order History</button>';
     listHtml += '<button class="modal-btn danger" style="background:#7c3aed;" onclick="saveListChecksAndQtys(\'' + saved.id + '\');if(confirm(\'Archive this order? It will be moved to the completed archive.\'))archiveList(\'' + saved.id + '\')">\u{1F4C1} Ordering Complete \u2014 Close Out & Archive</button>';
   } else {
-    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal()">Back to List</button>';
+    listHtml += '<button class="modal-btn secondary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');closeModal();showOrderHistory()">Back to Order History</button>';
     listHtml += '<button class="modal-btn primary" onclick="saveListChecksAndQtys(\'' + saved.id + '\');markListOrdered(\'' + saved.id + '\')">\u2705 Mark as Ordered</button>';
   }
   listHtml += '</div></div></div>';
